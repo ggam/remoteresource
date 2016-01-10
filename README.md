@@ -1,2 +1,2 @@
-# remoteresource
-Java EE CDI Extension to do lookups on custom JNDI contexts
+# RemoteResource
+Java EE CDI Extension that allows Resource injection from a custom JNDI InitialContext
