@@ -44,7 +44,6 @@ public class RemoteResourceLoaderExtension implements Extension {
                     Field field = annotatedField.getJavaMember();
 
                     if (remoteResource.validateOnDeployment()) {
-                        // Only check non-runtime fields
                         try {
                             T value = performLookup(remoteResource);
                             validateValue(field, value);
