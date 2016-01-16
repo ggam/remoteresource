@@ -3,13 +3,11 @@ package es.guillermogonzalezdeaguero.remoteresource;
 import java.lang.reflect.Field;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Map.Entry;
 import java.util.Set;
 import java.util.logging.Logger;
 import javax.enterprise.context.spi.CreationalContext;
 import javax.enterprise.event.Observes;
 import javax.enterprise.inject.InjectionException;
-import javax.enterprise.inject.spi.AnnotatedField;
 import javax.enterprise.inject.spi.AnnotatedType;
 import javax.enterprise.inject.spi.Extension;
 import javax.enterprise.inject.spi.InjectionPoint;
@@ -36,7 +34,7 @@ public class RemoteResourceLoaderExtension implements Extension {
             return;
         }
 
-        Map<AnnotatedField, Object> fieldValues = new HashMap<>();
+        Map<String, Object> cachedLookups = new HashMap<>();
         at.getFields().stream().
                 filter(f -> f.isAnnotationPresent(RemoteResource.class)).
                 forEach(annotatedField -> {
@@ -45,18 +43,10 @@ public class RemoteResourceLoaderExtension implements Extension {
 
                     if (remoteResource.validateOnDeployment()) {
                         try {
-                            T value = performLookup(remoteResource);
-                            validateValue(field, value);
-
-                            if (remoteResource.cache()) {
-                                // Store the value only if caching is enabled
-                                fieldValues.put(annotatedField, value);
-                            }
+                            lookupAndValidateAndCache(remoteResource, field, cachedLookups);
                         } catch (Exception e) {
                             pit.addDefinitionError(new InjectionException(e));
                         }
-                    } else {
-                        fieldValues.put(annotatedField, null);
                     }
 
                 });
@@ -64,35 +54,22 @@ public class RemoteResourceLoaderExtension implements Extension {
         final InjectionTarget<T> it = pit.getInjectionTarget();
         InjectionTarget<T> wrapped = new InjectionTarget<T>() {
             @Override
+            @SuppressWarnings("unchecked")
             public void inject(T instance, CreationalContext<T> ctx) {
                 it.inject(instance, ctx);
 
-                for (Entry<AnnotatedField, Object> object : fieldValues.entrySet()) {
-                    Field field = object.getKey().getJavaMember();
-                    field.setAccessible(true);
+                for (Field field : instance.getClass().getDeclaredFields()) {
+                    if (field.isAnnotationPresent(RemoteResource.class)) {
+                        RemoteResource annotation = field.getAnnotation(RemoteResource.class);
 
-                    T value = (T) object.getValue();
+                        field.setAccessible(true);
 
-                    if (value == null) {
                         try {
-                            RemoteResource annotation = object.getKey().getAnnotation(RemoteResource.class);
-
-                            value = performLookup(object.getKey().getAnnotation(RemoteResource.class));
-                            validateValue(field, value);
-
-                            if (annotation.cache()) {
-                                // Cache the value if needed
-                                fieldValues.put(object.getKey(), value);
-                            }
-                        } catch (Exception e) {
+                            T value = lookupAndValidateAndCache(annotation, field, cachedLookups);
+                            field.set(instance, value);
+                        } catch (Throwable e) {
                             throw new InjectionException(e);
                         }
-                    }
-
-                    try {
-                        field.set(instance, value);
-                    } catch (IllegalArgumentException | IllegalAccessException e) {
-                        throw new InjectionException(e);
                     }
                 }
             }
@@ -124,6 +101,25 @@ public class RemoteResourceLoaderExtension implements Extension {
         };
 
         pit.setInjectionTarget(wrapped);
+    }
+
+    private <T> T lookupAndValidateAndCache(RemoteResource annotation, Field field, Map<String, Object> cache) throws NamingException {
+        String key = annotation.externalContextLookup() + annotation.lookup();
+
+        T value;
+        if (annotation.cache()) {
+            value = (T) cache.get(key);
+            if (value == null) {
+                value = performLookup(annotation);
+                validateValue(field, value);
+                cache.put(key, value);
+            }
+        } else {
+            value = performLookup(annotation);
+            validateValue(field, value);
+        }
+
+        return value;
     }
 
     private <T> T performLookup(RemoteResource annotation) throws NamingException {
