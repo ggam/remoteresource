@@ -5,6 +5,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.logging.Logger;
+import java.util.stream.Stream;
 import javax.enterprise.context.spi.CreationalContext;
 import javax.enterprise.event.Observes;
 import javax.enterprise.inject.InjectionException;
@@ -58,20 +59,19 @@ public class RemoteResourceLoaderExtension implements Extension {
             public void inject(T instance, CreationalContext<T> ctx) {
                 it.inject(instance, ctx);
 
-                for (Field field : instance.getClass().getDeclaredFields()) {
-                    if (field.isAnnotationPresent(RemoteResource.class)) {
-                        RemoteResource annotation = field.getAnnotation(RemoteResource.class);
+                Stream.of(instance.getClass().getDeclaredFields()).
+                        filter(f -> f.isAnnotationPresent(RemoteResource.class)).
+                        forEach(field -> {
+                            RemoteResource annotation = field.getAnnotation(RemoteResource.class);
 
-                        field.setAccessible(true);
-
-                        try {
-                            T value = lookupAndValidateAndCache(annotation, field, cachedLookups);
-                            field.set(instance, value);
-                        } catch (Throwable e) {
-                            throw new InjectionException(e);
-                        }
-                    }
-                }
+                            field.setAccessible(true);
+                            try {
+                                T value = lookupAndValidateAndCache(annotation, field, cachedLookups);
+                                field.set(instance, value);
+                            } catch (Throwable e) {
+                                throw new InjectionException(e);
+                            }
+                        });
             }
 
             @Override
@@ -108,8 +108,10 @@ public class RemoteResourceLoaderExtension implements Extension {
 
         T value;
         if (annotation.cache()) {
+            // Check if it is already cached
             value = (T) cache.get(key);
             if (value == null) {
+                // Lookup and cache if needed
                 value = performLookup(annotation);
                 validateValue(field, value);
                 cache.put(key, value);
